@@ -1,0 +1,25 @@
+{
+  "name": "data-staging",
+  "author": "antior",
+  "url": "https://github.com/ljq29/siyuan-data-staging",
+  "version": "0.2.1",
+  "minAppVersion": "3.8.10",
+  "backends": ["all"],
+  "frontends": ["all"],
+  "displayName": {
+    "default": "Data Staging",
+    "zh_CN": "数据暂存",
+    "zh_TW": "資料暫存"
+  },
+  "description": {
+    "default": "Drag files into a document block for staging, download and synchronization",
+    "zh_CN": "将文件拖入文档块中暂存、下载并同步",
+    "zh_TW": "將檔案拖入文件區塊中暫存、下載並同步"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh_CN": "README.md",
+    "zh_TW": "README.md"
+  },
+  "keywords": ["file", "attachment", "staging", "sync"]
+}
