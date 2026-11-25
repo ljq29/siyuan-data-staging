@@ -35,7 +35,12 @@ for (const block of legacyBlocks) {
     console.log(`已迁移块 ${block.id}`);
 }
 
-const remaining = await findLegacyBlocks();
+let remaining = await findLegacyBlocks();
+const deadline = Date.now() + 10000;
+while (remaining.length && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    remaining = await findLegacyBlocks();
+}
 if (remaining.length) {
     throw new Error(`仍有 ${remaining.length} 个旧块未迁移`);
 }
