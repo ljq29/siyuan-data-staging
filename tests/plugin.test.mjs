@@ -33,7 +33,7 @@ test("插件注册数据暂存自定义块和斜杠命令", () => {
     const DataStagingPlugin = loadPlugin();
     const plugin = new DataStagingPlugin();
     plugin.onload();
-    assert.equal(typeof plugin.customBlockRenders["data-staging"].render, "function");
+    assert.equal(typeof plugin.customBlockRenders["siyuan-data-staging"].render, "function");
     assert.equal(plugin.protyleSlash.length, 1);
     assert.ok(plugin.protyleSlash[0].filter.includes("数据暂存"));
     assert.match(plugin.protyleSlash[0].html, /<svg/);
@@ -47,6 +47,6 @@ test("插件注册数据暂存自定义块和斜杠命令", () => {
     });
     assert.equal(inserted[1], true);
     assert.equal(inserted[2], true);
-    assert.match(inserted[0], /^;;;data-staging\/data-staging\n/);
+    assert.match(inserted[0], /^;;;siyuan-data-staging\/siyuan-data-staging\n/);
     assert.match(inserted[0], /\{"version":1\}/);
 });

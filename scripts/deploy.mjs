@@ -6,7 +6,8 @@ if (!baseURL || !token) {
     throw new Error("请通过 SIYUAN_BASE_URL 和 SIYUAN_TOKEN 指定目标实例");
 }
 
-const manifest = JSON.parse(await readFile("dist/data-staging/plugin.json", "utf8"));
+const manifest = JSON.parse(await readFile("plugin.json", "utf8"));
+const packageDirectory = `dist/${manifest.name}`;
 const directory = `/data/plugins/${manifest.name}`;
 const headers = {Authorization: `Token ${token}`};
 
@@ -32,7 +33,7 @@ if (existing?.length && process.env.SIYUAN_DEPLOY_OVERWRITE !== "1") {
 }
 
 for (const file of ["plugin.json", "index.js", "index.css", "README.md"]) {
-    const data = await readFile(`dist/data-staging/${file}`);
+    const data = await readFile(`${packageDirectory}/${file}`);
     const form = new FormData();
     form.append("path", `${directory}/${file}`);
     form.append("file", new Blob([data]), file);

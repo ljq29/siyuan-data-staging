@@ -11,9 +11,19 @@
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/ljq29/siyuan-data-staging/releases/latest) 下载 `data-staging.zip`，将其中的 `data-staging` 目录解压到当前工作空间的 `data/plugins/`，然后重新加载思源并在插件设置中启用“数据暂存”。
+从 [GitHub Releases](https://github.com/ljq29/siyuan-data-staging/releases/latest) 下载 `siyuan-data-staging.zip`，将其中的 `siyuan-data-staging` 目录解压到当前工作空间的 `data/plugins/`，然后重新加载思源并在插件设置中启用“数据暂存”。
 
-本地执行 `pnpm run package` 后，也可以直接把本目录中的 `plugin.json`、`index.js`、`index.css` 和 `README.md` 放入 `data/plugins/data-staging/`。
+本地执行 `pnpm run package` 后，也可以直接把本目录中的 `plugin.json`、`index.js`、`index.css` 和 `README.md` 放入 `data/plugins/siyuan-data-staging/`。
+
+### 从 0.2.x 升级
+
+旧版插件名为 `data-staging`。安装新版后，在源码仓库执行以下命令迁移已有块，再重新加载思源并移除旧插件目录：
+
+```sh
+SIYUAN_BASE_URL=https://example.com SIYUAN_TOKEN=your-token pnpm run migrate:legacy
+```
+
+迁移脚本只把精确匹配的旧标识 `;;;data-staging/data-staging` 更新为 `;;;siyuan-data-staging/siyuan-data-staging`，保留块 ID、块内容和 `data/staging/` 中的文件。执行前请备份工作空间。
 
 ## 使用
 
@@ -50,7 +60,7 @@ pnpm test
 pnpm run package
 ```
 
-打包结果位于 `dist/data-staging/` 和 `dist/data-staging.zip`。
+手动安装包位于 `dist/siyuan-data-staging.zip`，其中包含顶层 `siyuan-data-staging/` 目录；官方集市包位于 `dist/package.zip`，安装文件直接位于 ZIP 根目录。解压后的文件同时保存在 `dist/siyuan-data-staging/`。
 
 远程文件 API 冒烟测试需要显式提供测试实例，不会把凭据写入项目：
 
@@ -65,8 +75,8 @@ SIYUAN_BASE_URL=https://example.com SIYUAN_TOKEN=your-token pnpm run test:api
 同步修改 `plugin.json` 和 `package.json` 中的版本号，提交并推送到 `main`，然后推送对应的版本标签：
 
 ```sh
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-GitHub Actions 会自动安装依赖、执行类型检查和测试、生成 ZIP。标签必须与两个清单中的版本一致；验证通过后，Workflow 会创建对应的 GitHub Release 并上传 `data-staging.zip`。主分支推送和手动触发只构建及上传工作流产物，不创建 Release。
+GitHub Actions 会自动安装依赖、执行类型检查和测试、生成 ZIP。标签必须与两个清单中的版本一致；验证通过后，Workflow 会创建对应的 GitHub Release 并同时上传手动安装包 `siyuan-data-staging.zip` 和官方集市包 `package.zip`。主分支推送和手动触发只构建及上传工作流产物，不创建 Release。

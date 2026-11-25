@@ -3,8 +3,8 @@ import {icon} from "./icons";
 import {renderDataStaging} from "./view";
 import {StagingStorage} from "./storage";
 
-const BLOCK_TYPE = "data-staging";
-const CUSTOM_BLOCK_MARKDOWN = `;;;data-staging/data-staging
+const BLOCK_TYPE = "siyuan-data-staging";
+const CUSTOM_BLOCK_MARKDOWN = `;;;siyuan-data-staging/siyuan-data-staging
 {"version":1}
 ;;;`;
 

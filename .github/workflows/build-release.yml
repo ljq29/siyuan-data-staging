@@ -58,8 +58,10 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: data-staging-${{ steps.version.outputs.version }}
-          path: dist/data-staging.zip
+          name: siyuan-data-staging-${{ steps.version.outputs.version }}
+          path: |
+            dist/siyuan-data-staging.zip
+            dist/package.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -70,10 +72,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          assets=(dist/siyuan-data-staging.zip dist/package.zip)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/data-staging.zip --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/data-staging.zip \
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "数据暂存 $GITHUB_REF_NAME" \
               --generate-notes

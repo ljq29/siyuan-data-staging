@@ -1,6 +1,6 @@
 {
   "name": "siyuan-data-staging",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,8 @@
     "test": "pnpm run build && node --test tests/*.test.mjs",
     "test:api": "node scripts/api-smoke.mjs",
     "package": "pnpm run build && node scripts/package.mjs",
-    "deploy": "node scripts/deploy.mjs"
+    "deploy": "node scripts/deploy.mjs",
+    "migrate:legacy": "node scripts/migrate-legacy.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
