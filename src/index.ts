@@ -16,8 +16,8 @@ export default class DataStagingPlugin extends Plugin {
         };
         this.protyleSlash.push({
             id: BLOCK_TYPE,
-            filter: ["数据暂存", "暂存", "文件暂存", "data staging", "file staging", "zc", "zj"],
-            html: `<span class="data-staging-slash">${icon("box")}<span>数据暂存</span></span>`,
+            filter: ["文件暂存", "数据暂存", "暂存", "file staging", "file store", "data staging", "zc", "zj"],
+            html: `<span class="data-staging-slash">${icon("box")}<span>文件暂存</span></span>`,
             callback: protyle => {
                 protyle.insert(CUSTOM_BLOCK_MARKDOWN, true, true);
             },

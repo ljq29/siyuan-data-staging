@@ -1,6 +1,6 @@
 export const DATA_ROOT = "/data/staging";
 export const METADATA_FILE = ".data-staging.json";
-export const MAX_FILE_SIZE = 100 * 1024 * 1024;
+export const MAX_FILE_SIZE = 200 * 1024 * 1024;
 export const MAX_ARCHIVE_SIZE = 512 * 1024 * 1024;
 
 export interface StagingFileEntry {
@@ -9,6 +9,7 @@ export interface StagingFileEntry {
     isDir: boolean;
     updated: number;
     displayName: string;
+    size?: number;
 }
 
 export interface DirectoryEntryLike {
@@ -28,11 +29,12 @@ export interface PathLike {
 }
 
 export interface StagingMetadata {
-    version: 1;
+    version: 2;
     names: Record<string, string>;
+    sizes: Record<string, number>;
 }
 
-export const emptyMetadata = (): StagingMetadata => ({version: 1, names: {}});
+export const emptyMetadata = (): StagingMetadata => ({version: 2, names: {}, sizes: {}});
 
 export const isValidBlockID = (blockID: string) => /^\d{14}-[0-9a-z]{7}$/.test(blockID);
 
@@ -88,24 +90,72 @@ export const normalizeMetadata = (value: unknown): StagingMetadata => {
     if (!names || typeof names !== "object" || Array.isArray(names)) {
         throw new Error("显示名元数据格式无效");
     }
-    const normalized: Record<string, string> = {};
+    const normalizedNames: Record<string, string> = {};
     Object.entries(names).forEach(([path, name]) => {
         try {
             const normalizedPath = normalizeRelativePath(path);
             if (typeof name === "string" && validateFileName(name) === undefined) {
-                normalized[normalizedPath] = name;
+                normalizedNames[normalizedPath] = name;
             }
         } catch {
             // 忽略无法对应到合法目录项的旧映射。
         }
     });
-    return {version: 1, names: normalized};
+    const normalizedSizes: Record<string, number> = {};
+    const sizes = (value as {sizes?: unknown}).sizes;
+    if (sizes && typeof sizes === "object" && !Array.isArray(sizes)) {
+        Object.entries(sizes).forEach(([path, size]) => {
+            try {
+                const normalizedPath = normalizeRelativePath(path);
+                if (typeof size === "number" && Number.isFinite(size) && size >= 0) {
+                    normalizedSizes[normalizedPath] = Math.floor(size);
+                }
+            } catch {
+                // 忽略无法对应到合法目录项的旧大小记录。
+            }
+        });
+    }
+    return {version: 2, names: normalizedNames, sizes: normalizedSizes};
+};
+
+export const forgetMetadataPath = (metadata: StagingMetadata, path: string): boolean => {
+    const relative = normalizeRelativePath(path);
+    const prefix = `${relative}/`;
+    let changed = false;
+    for (const record of [metadata.names, metadata.sizes]) {
+        for (const key of Object.keys(record)) {
+            if (key === relative || key.startsWith(prefix)) {
+                delete record[key];
+                changed = true;
+            }
+        }
+    }
+    return changed;
+};
+
+export const moveMetadataPath = (metadata: StagingMetadata, source: string, target: string): boolean => {
+    const from = normalizeRelativePath(source);
+    const to = normalizeRelativePath(target);
+    if (from === to) {
+        return false;
+    }
+    const prefix = `${from}/`;
+    let changed = false;
+    for (const record of [metadata.names, metadata.sizes]) {
+        const moves = Object.entries(record).filter(([key]) => key === from || key.startsWith(prefix));
+        for (const [key, value] of moves) {
+            delete record[key];
+            record[`${to}${key.slice(from.length)}`] = value;
+            changed = true;
+        }
+    }
+    return changed;
 };
 
 export const normalizeEntries = (
     entries: DirectoryEntryLike[],
     directory = "",
-    names: Record<string, string> = {},
+    metadata: StagingMetadata = emptyMetadata(),
 ): StagingFileEntry[] => {
     const parent = normalizeRelativePath(directory);
     return entries.filter(entry => !entry.isSymlink && validateFileName(entry.name) === undefined)
@@ -113,13 +163,15 @@ export const normalizeEntries = (
         .map(entry => {
             const updated = Number(entry.updated) || 0;
             const path = joinRelativePath(parent, entry.name);
-            const displayName = names[path];
+            const displayName = metadata.names[path];
+            const size = metadata.sizes[path];
             return {
                 name: entry.name,
                 path,
                 isDir: entry.isDir,
                 updated: updated > 0 && updated < 1e12 ? updated * 1000 : updated,
                 displayName: displayName && validateFileName(displayName) === undefined ? displayName : entry.name,
+                size: !entry.isDir && typeof size === "number" ? size : undefined,
             };
         })
         .sort((a, b) => Number(b.isDir) - Number(a.isDir)
@@ -156,5 +208,8 @@ export const formatFileSize = (bytes: number) => {
     if (bytes < 1024 * 1024) {
         return `${(bytes / 1024).toFixed(1)} KiB`;
     }
-    return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+    if (bytes < 1024 * 1024 * 1024) {
+        return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+    }
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`;
 };

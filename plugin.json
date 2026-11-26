@@ -2,24 +2,24 @@
   "name": "siyuan-data-staging",
   "author": "antior",
   "url": "https://github.com/ljq29/siyuan-data-staging",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "minAppVersion": "3.8.10",
   "backends": ["all"],
   "frontends": ["all"],
   "displayName": {
-    "default": "Data Staging",
-    "zh-CN": "数据暂存",
-    "zh-TW": "資料暫存"
+    "default": "File Staging",
+    "zh-CN": "文件暂存",
+    "zh-TW": "檔案暫存"
   },
   "description": {
-    "default": "Drag files into a document block for staging, download and synchronization",
-    "zh-CN": "将文件拖入文档块中暂存、下载并同步",
-    "zh-TW": "將檔案拖入文件區塊中暫存、下載並同步"
+    "default": "Stage files and folders inside a document block like a file store: drag and drop, folders, download and synchronization",
+    "zh-CN": "在文档块中像网盘一样暂存文件与文件夹：拖放上传、图标与列表视图、详情面板、下载并随思源同步（file staging / file store）",
+    "zh-TW": "在文件區塊中像網盤一樣暫存檔案與資料夾：拖放上傳、圖示與列表檢視、詳情面板、下載並隨思源同步"
   },
   "readme": {
     "default": "README.md",
     "zh-CN": "README.md",
     "zh-TW": "README.md"
   },
-  "keywords": ["file", "attachment", "staging", "sync"]
+  "keywords": ["file", "files", "staging", "file staging", "file store", "filebox", "attachment", "sync", "网盘", "文件暂存", "暂存", "文件中转"]
 }

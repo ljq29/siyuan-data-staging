@@ -38,7 +38,7 @@ test("显示名元数据仅保留合法路径和名称", () => {
         "folder/a.txt": "显示名.txt",
         "../bad.txt": "越界.txt",
         "folder/b.txt": "bad/name.txt",
-    }}), {version: 1, names: {"folder/a.txt": "显示名.txt"}});
+    }}), {version: 2, names: {"folder/a.txt": "显示名.txt"}, sizes: {}});
     assert.throws(() => model.normalizeMetadata(null));
     assert.throws(() => model.normalizeMetadata({names: []}));
 });
@@ -51,14 +51,14 @@ test("目录结果包含文件夹、排除链接和元数据并应用显示名",
         {name: "link.txt", updated: 400, isDir: false, isSymlink: true},
         {name: "../bad.txt", updated: 500, isDir: false, isSymlink: false},
         {name: ".data-staging.json", updated: 600, isDir: false, isSymlink: false},
-    ], "", {"old.txt": "旧文件.txt", folder: "资料"}), [
-        {name: "folder", path: "folder", isDir: true, updated: 300000, displayName: "资料"},
-        {name: "old.txt", path: "old.txt", isDir: false, updated: 100000, displayName: "旧文件.txt"},
-        {name: "new.txt", path: "new.txt", isDir: false, updated: 200000, displayName: "new.txt"},
+    ], "", {version: 2, names: {"old.txt": "旧文件.txt", folder: "资料"}, sizes: {"old.txt": 2048}}), [
+        {name: "folder", path: "folder", isDir: true, updated: 300000, displayName: "资料", size: undefined},
+        {name: "old.txt", path: "old.txt", isDir: false, updated: 100000, displayName: "旧文件.txt", size: 2048},
+        {name: "new.txt", path: "new.txt", isDir: false, updated: 200000, displayName: "new.txt", size: undefined},
     ]);
     assert.deepEqual(model.normalizeEntries([
         {name: "milliseconds.txt", updated: 1795602234000, isDir: false, isSymlink: false},
-    ]), [{name: "milliseconds.txt", path: "milliseconds.txt", isDir: false, updated: 1795602234000, displayName: "milliseconds.txt"}]);
+    ]), [{name: "milliseconds.txt", path: "milliseconds.txt", isDir: false, updated: 1795602234000, displayName: "milliseconds.txt", size: undefined}]);
 });
 
 test("路径去重和覆盖检测不区分大小写", () => {
@@ -83,4 +83,47 @@ test("文件大小用于上传限制提示", () => {
     assert.equal(model.formatFileSize(100), "100 B");
     assert.equal(model.formatFileSize(2048), "2.0 KiB");
     assert.equal(model.formatFileSize(100 * 1024 * 1024), "100.0 MiB");
+});
+
+test("大小记录随元数据归一化，非法记录被忽略", () => {
+    assert.deepEqual(model.normalizeMetadata({version: 1, names: {}, sizes: {
+        "a.txt": 1024,
+        "b.txt": 12.9,
+        "c.txt": -1,
+        "d.txt": "2048",
+        "../e.txt": 10,
+    }}), {version: 2, names: {}, sizes: {"a.txt": 1024, "b.txt": 12}});
+    assert.deepEqual(model.emptyMetadata(), {version: 2, names: {}, sizes: {}});
+});
+
+test("删除路径会清理自身和后代的显示名与大小", () => {
+    const metadata = {
+        version: 2,
+        names: {"folder": "资料", "folder/a.txt": "甲.txt", "other.txt": "乙.txt"},
+        sizes: {"folder/a.txt": 10, "folder/nested/b.txt": 20, "other.txt": 30},
+    };
+    assert.equal(model.forgetMetadataPath(metadata, "folder"), true);
+    assert.deepEqual(metadata, {version: 2, names: {"other.txt": "乙.txt"}, sizes: {"other.txt": 30}});
+    assert.equal(model.forgetMetadataPath(metadata, "missing"), false);
+});
+
+test("移动路径会迁移显示名和大小记录", () => {
+    const metadata = {
+        version: 2,
+        names: {"folder": "资料", "folder/a.txt": "甲.txt"},
+        sizes: {"folder/a.txt": 10, "other.txt": 30},
+    };
+    assert.equal(model.moveMetadataPath(metadata, "folder", "archive/folder"), true);
+    assert.deepEqual(metadata, {
+        version: 2,
+        names: {"archive/folder": "资料", "archive/folder/a.txt": "甲.txt"},
+        sizes: {"archive/folder/a.txt": 10, "other.txt": 30},
+    });
+    assert.equal(model.moveMetadataPath(metadata, "other.txt", "other.txt"), false);
+});
+
+test("单文件上限为 200 MiB，大小格式化支持 GiB", () => {
+    assert.equal(model.MAX_FILE_SIZE, 200 * 1024 * 1024);
+    assert.equal(model.formatFileSize(model.MAX_FILE_SIZE), "200.0 MiB");
+    assert.equal(model.formatFileSize(2 * 1024 * 1024 * 1024), "2.00 GiB");
 });

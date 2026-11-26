@@ -2,11 +2,13 @@ import {fetchSyncPost} from "siyuan";
 import type {DirectoryEntry} from "siyuan";
 import {
     emptyMetadata,
+    forgetMetadataPath,
     getBaseName,
     getBlockDirectory,
     getParentPath,
     joinRelativePath,
     METADATA_FILE,
+    moveMetadataPath,
     normalizeEntries,
     normalizeMetadata,
     normalizeRelativePath,
@@ -105,13 +107,13 @@ export class StagingStorage {
             this.readDirectory(blockID, directory),
             this.readMetadata(blockID),
         ]);
-        return normalizeEntries(entries, directory, metadata.names);
+        return normalizeEntries(entries, directory, metadata);
     }
 
     public async listRecursive(blockID: string, directory = ""): Promise<StagingFileEntry[]> {
         const metadata = await this.readMetadata(blockID);
         const walk = async (current: string): Promise<StagingFileEntry[]> => {
-            const entries = normalizeEntries(await this.readDirectory(blockID, current), current, metadata.names);
+            const entries = normalizeEntries(await this.readDirectory(blockID, current), current, metadata);
             const nested = await Promise.all(entries.filter(entry => entry.isDir).map(entry => walk(entry.path)));
             return [...entries, ...nested.flat()];
         };
@@ -150,10 +152,47 @@ export class StagingStorage {
         await request<null>("/api/file/putFile", formData);
     }
 
+    public async recordSizes(blockID: string, sizes: Record<string, number>): Promise<void> {
+        const entries = Object.entries(sizes);
+        if (!entries.length) {
+            return;
+        }
+        const metadata = await this.readMetadata(blockID);
+        let changed = false;
+        for (const [path, size] of entries) {
+            if (Number.isFinite(size) && size >= 0) {
+                metadata.sizes[normalizeRelativePath(path)] = Math.floor(size);
+                changed = true;
+            }
+        }
+        if (changed) {
+            await this.saveMetadata(blockID, metadata);
+        }
+    }
+
     public async remove(blockID: string, path: string): Promise<void> {
+        const relative = normalizeRelativePath(path);
         await request<null>("/api/file/removeFile", {
-            path: `${getBlockDirectory(blockID)}/${normalizeRelativePath(path)}`,
+            path: `${getBlockDirectory(blockID)}/${relative}`,
         });
+        const metadata = await this.readMetadata(blockID);
+        if (forgetMetadataPath(metadata, relative)) {
+            await this.saveMetadata(blockID, metadata);
+        }
+    }
+
+    public async move(blockID: string, source: string, target: string): Promise<void> {
+        const from = normalizeRelativePath(source);
+        const to = normalizeRelativePath(target);
+        const directory = getBlockDirectory(blockID);
+        await request<null>("/api/file/renameFile", {
+            path: `${directory}/${from}`,
+            newPath: `${directory}/${to}`,
+        });
+        const metadata = await this.readMetadata(blockID);
+        if (moveMetadataPath(metadata, from, to)) {
+            await this.saveMetadata(blockID, metadata);
+        }
     }
 
     public async rename(blockID: string, path: string, displayName: string): Promise<void> {

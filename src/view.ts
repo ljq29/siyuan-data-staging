@@ -2,12 +2,18 @@ import {confirm, showMessage} from "siyuan";
 import {downloadFolderArchive} from "./archive";
 import {dataTransferToUploadItems, filesToUploadItems} from "./drop";
 import type {UploadItem} from "./drop";
+import {filterEntries, resolveRangeSelection, SORT_KEY_LABELS, sortEntries, toggleSelected} from "./entries";
+import type {SortKey} from "./entries";
 import {icon} from "./icons";
 import type {IconName} from "./icons";
+import {FILE_KIND_LABELS, getFileKind} from "./kind";
+import type {FileKind} from "./kind";
 import {
     findExistingPaths,
     formatFileSize,
+    getBaseName,
     getDuplicatePaths,
+    getParentPath,
     hasDisplayNameConflict,
     joinRelativePath,
     MAX_FILE_SIZE,
@@ -31,6 +37,25 @@ interface BreadcrumbItem {
 interface PreparedUpload extends UploadItem {
     fullPath: string;
 }
+
+const INTERNAL_DRAG_TYPE = "application/x-siyuan-data-staging";
+
+const KIND_ICONS: Record<FileKind, IconName> = {
+    folder: "folder",
+    image: "image",
+    audio: "audio",
+    video: "video",
+    pdf: "pdf",
+    word: "word",
+    sheet: "sheet",
+    slides: "slides",
+    archive: "archive",
+    code: "code",
+    text: "text",
+    markdown: "text",
+    package: "package",
+    file: "file",
+};
 
 const confirmAction = (title: string, text: string, isDelete: boolean, confirmLabel: string) => {
     return new Promise<boolean>(resolve => {
@@ -65,30 +90,53 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
     let busy = false;
     let entries: StagingFileEntry[] = [];
     let currentDirectory = "";
-    let breadcrumbs: BreadcrumbItem[] = [{path: "", displayName: "数据暂存"}];
+    let breadcrumbs: BreadcrumbItem[] = [{path: "", displayName: "文件暂存"}];
     let viewMode: "grid" | "list" = "grid";
+    let sortKey: SortKey = "name";
+    let sortDescending = false;
+    let filterKeyword = "";
+    let selected: string[] = [];
+    let selectionAnchor = "";
     let renamingPath = "";
     let creatingFolder = false;
+    let detailsVisible = true;
 
     const root = document.createElement("section");
     root.className = "data-staging";
+    root.tabIndex = 0;
     root.innerHTML = `
         <div class="data-staging__header">
-            <strong class="data-staging__title">${icon("box")}<span>数据暂存</span></strong>
+            <strong class="data-staging__title">${icon("box")}<span>文件暂存</span></strong>
             <div class="data-staging__actions">
+                <input type="search" class="b3-text-field data-staging__search" placeholder="搜索当前目录" aria-label="搜索当前目录">
+                <select class="b3-select data-staging__sort" aria-label="排序方式"></select>
+                <button type="button" class="b3-button b3-button--text" data-action="sort-direction"></button>
                 <button type="button" class="b3-button b3-button--outline" data-action="add">${icon("upload")}<span>添加文件</span></button>
-                <button type="button" class="b3-button b3-button--outline" data-action="add-folder">${icon("folderPlus")}<span>添加文件夹</span></button>
-                <button type="button" class="b3-button b3-button--outline" data-action="new-folder">${icon("folderPlus")}<span>新建文件夹</span></button>
-                <button type="button" class="b3-button b3-button--text" data-action="download-current">${icon("download")}<span>下载目录</span></button>
-                <button type="button" class="b3-button b3-button--text" data-action="refresh">${icon("refresh")}<span>刷新</span></button>
+                <button type="button" class="b3-button b3-button--text" data-action="add-folder" title="添加文件夹" aria-label="添加文件夹">${icon("upload")}</button>
+                <button type="button" class="b3-button b3-button--text" data-action="new-folder" title="新建文件夹" aria-label="新建文件夹">${icon("folderPlus")}</button>
+                <button type="button" class="b3-button b3-button--text" data-action="download-current" title="下载当前目录为 ZIP" aria-label="下载当前目录为 ZIP">${icon("download")}</button>
+                <button type="button" class="b3-button b3-button--text" data-action="refresh" title="刷新" aria-label="刷新">${icon("refresh")}</button>
                 <button type="button" class="b3-button b3-button--text" data-action="toggle-view"></button>
+                <button type="button" class="b3-button b3-button--text" data-action="toggle-detail" title="显示或隐藏详情面板" aria-label="显示或隐藏详情面板">${icon("info")}</button>
+            </div>
+        </div>
+        <div class="data-staging__toolbar" hidden>
+            <span class="data-staging__selection-count"></span>
+            <div class="data-staging__toolbar-actions">
+                <button type="button" class="b3-button b3-button--text" data-action="download-selected">${icon("download")}<span>下载</span></button>
+                <button type="button" class="b3-button b3-button--text" data-action="rename-selected">${icon("rename")}<span>重命名</span></button>
+                <button type="button" class="b3-button b3-button--text data-staging__remove" data-action="remove-selected">${icon("trash")}<span>删除</span></button>
+                <button type="button" class="b3-button b3-button--text" data-action="clear-selection" title="取消选择" aria-label="取消选择">${icon("close")}</button>
             </div>
         </div>
         <nav class="data-staging__breadcrumbs" aria-label="暂存目录"></nav>
-        <input type="file" multiple hidden>
-        <input type="file" hidden data-directory-input>
+        <div class="data-staging__main">
+            <div class="data-staging__content"></div>
+            <aside class="data-staging__detail" aria-label="选中项详情"></aside>
+        </div>
         <div class="data-staging__status" role="status" aria-live="polite"></div>
-        <div class="data-staging__content"></div>`;
+        <input type="file" multiple hidden>
+        <input type="file" hidden data-directory-input>`;
     options.element.replaceChildren(root);
 
     const getElement = <T extends Element>(selector: string): T => {
@@ -98,18 +146,36 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         }
         return element;
     };
+    const searchInput = getElement<HTMLInputElement>(".data-staging__search");
+    const sortSelect = getElement<HTMLSelectElement>(".data-staging__sort");
+    const sortDirectionButton = getElement<HTMLButtonElement>('[data-action="sort-direction"]');
     const addButton = getElement<HTMLButtonElement>('[data-action="add"]');
     const addFolderButton = getElement<HTMLButtonElement>('[data-action="add-folder"]');
     const newFolderButton = getElement<HTMLButtonElement>('[data-action="new-folder"]');
     const downloadCurrentButton = getElement<HTMLButtonElement>('[data-action="download-current"]');
     const refreshButton = getElement<HTMLButtonElement>('[data-action="refresh"]');
     const toggleViewButton = getElement<HTMLButtonElement>('[data-action="toggle-view"]');
+    const toggleDetailButton = getElement<HTMLButtonElement>('[data-action="toggle-detail"]');
+    const toolbarElement = getElement<HTMLDivElement>(".data-staging__toolbar");
+    const selectionCount = getElement<HTMLSpanElement>(".data-staging__selection-count");
+    const downloadSelectedButton = getElement<HTMLButtonElement>('[data-action="download-selected"]');
+    const renameSelectedButton = getElement<HTMLButtonElement>('[data-action="rename-selected"]');
+    const removeSelectedButton = getElement<HTMLButtonElement>('[data-action="remove-selected"]');
+    const clearSelectionButton = getElement<HTMLButtonElement>('[data-action="clear-selection"]');
     const input = getElement<HTMLInputElement>('input[type="file"]:not([data-directory-input])');
     const directoryInput = getElement<HTMLInputElement>("input[data-directory-input]");
     const statusElement = getElement<HTMLDivElement>(".data-staging__status");
     const contentElement = getElement<HTMLDivElement>(".data-staging__content");
+    const detailElement = getElement<HTMLElement>(".data-staging__detail");
     const breadcrumbsElement = getElement<HTMLElement>(".data-staging__breadcrumbs");
     directoryInput.setAttribute("webkitdirectory", "");
+    (Object.keys(SORT_KEY_LABELS) as SortKey[]).forEach(key => {
+        const option = document.createElement("option");
+        option.value = key;
+        option.textContent = `按${SORT_KEY_LABELS[key]}排序`;
+        sortSelect.append(option);
+    });
+    sortSelect.value = sortKey;
 
     const setStatus = (text = "") => {
         statusElement.textContent = text;
@@ -123,7 +189,15 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
             button.disabled = value;
         });
         contentElement.setAttribute("aria-busy", String(value));
+        renameSelectedButton.disabled = value || selected.length !== 1;
+        downloadSelectedButton.disabled = value || !selected.length;
+        removeSelectedButton.disabled = value || !selected.length;
     };
+
+    const visibleEntries = () => sortEntries(filterEntries(entries, filterKeyword), sortKey, sortDescending);
+    const visiblePaths = () => visibleEntries().map(entry => entry.path);
+    const selectedEntries = () => selected.map(path => entries.find(entry => entry.path === path))
+        .filter((entry): entry is StagingFileEntry => !!entry);
 
     const makeButton = (label: string, iconName: IconName, handler: () => void, className = "") => {
         const button = document.createElement("button");
@@ -140,41 +214,58 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         return button;
     };
 
-    const renderBreadcrumbs = () => {
-        breadcrumbsElement.replaceChildren();
-        breadcrumbs.forEach((item, index) => {
-            if (index) {
-                const separator = document.createElement("span");
-                separator.className = "data-staging__breadcrumb-separator";
-                separator.innerHTML = icon("chevron");
-                breadcrumbsElement.append(separator);
-            }
-            const button = makeButton(item.displayName, index === 0 ? "box" : "folder", () => {
-                if (busy) {
-                    return;
-                }
-                currentDirectory = item.path;
-                breadcrumbs = breadcrumbs.slice(0, index + 1);
-                renamingPath = "";
-                void refresh();
-            }, "data-staging__breadcrumb");
-            button.disabled = busy || index === breadcrumbs.length - 1;
-            breadcrumbsElement.append(button);
-        });
+    const clearSelection = () => {
+        selected = [];
+        selectionAnchor = "";
+    };
+
+    const navigateTo = (path: string, depth: number) => {
+        currentDirectory = path;
+        breadcrumbs = breadcrumbs.slice(0, depth + 1);
+        renamingPath = "";
+        creatingFolder = false;
+        clearSelection();
+        void refresh();
     };
 
     const downloadFile = async (entry: StagingFileEntry) => {
-        if (busy) {
+        setStatus(`正在下载：${entry.displayName}`);
+        saveBlob(await storage.download(blockID, entry.path), entry.displayName);
+        setStatus(`已开始下载：${entry.displayName}`);
+    };
+
+    const downloadFolder = async (directory: string, displayName: string) => {
+        setStatus(`正在打包：${displayName}`);
+        const archive = await downloadFolderArchive(storage, blockID, directory, displayName);
+        saveBlob(archive.blob, archive.fileName);
+        setStatus(`已开始下载：${archive.fileName}（${archive.fileCount} 个文件）`);
+    };
+
+    const downloadEntry = async (entry: StagingFileEntry) => {
+        if (entry.isDir) {
+            await downloadFolder(entry.path, entry.displayName);
+        } else {
+            await downloadFile(entry);
+        }
+    };
+
+    const downloadSelected = async () => {
+        const targets = selectedEntries();
+        if (busy || !targets.length) {
             return;
         }
         setBusy(true);
-        setStatus(`正在下载：${entry.displayName}`);
+        const errors: string[] = [];
         try {
-            saveBlob(await storage.download(blockID, entry.path), entry.displayName);
-            setStatus(`已开始下载：${entry.displayName}`);
-        } catch (error) {
-            console.error("Data staging download failed", error);
-            setStatus(`下载失败：${entry.displayName}；${error instanceof Error ? error.message : String(error)}`);
+            for (const entry of targets) {
+                try {
+                    await downloadEntry(entry);
+                } catch (error) {
+                    console.error("File staging download failed", error);
+                    errors.push(`${entry.displayName}：${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+            setStatus(errors.length ? `部分下载失败：${errors.join("；")}` : `已开始下载 ${targets.length} 项`);
         } finally {
             if (!disposed) {
                 setBusy(false);
@@ -182,18 +273,16 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         }
     };
 
-    const downloadFolder = async (directory: string, displayName: string) => {
+    const downloadCurrent = async () => {
         if (busy) {
             return;
         }
+        const current = breadcrumbs[breadcrumbs.length - 1];
         setBusy(true);
-        setStatus(`正在打包：${displayName}`);
         try {
-            const archive = await downloadFolderArchive(storage, blockID, directory, displayName);
-            saveBlob(archive.blob, archive.fileName);
-            setStatus(`已开始下载：${archive.fileName}（${archive.fileCount} 个文件）`);
+            await downloadFolder(current.path, current.displayName);
         } catch (error) {
-            console.error("Data staging folder download failed", error);
+            console.error("File staging folder download failed", error);
             setStatus(`文件夹下载失败：${error instanceof Error ? error.message : String(error)}`);
         } finally {
             if (!disposed) {
@@ -202,24 +291,34 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         }
     };
 
-    const remove = async (entry: StagingFileEntry) => {
-        if (busy) {
+    const removeEntries = async (targets: StagingFileEntry[]) => {
+        if (busy || !targets.length) {
             return;
         }
-        const detail = entry.isDir ? "文件夹及其中全部内容都会被删除。" : "此操作会同步到其他设备。";
-        if (!await confirmAction("删除暂存内容", `确定删除“${entry.displayName}”吗？${detail}`, true, "删除")) {
+        const names = targets.map(entry => entry.displayName).join("、");
+        const hasFolder = targets.some(entry => entry.isDir);
+        const detail = hasFolder ? "文件夹及其中全部内容都会被删除。" : "此操作会同步到其他设备。";
+        if (!await confirmAction("删除暂存内容", `确定删除“${names}”吗？${detail}`, true, "删除")) {
             return;
         }
         setBusy(true);
-        setStatus(`正在删除：${entry.displayName}`);
+        const errors: string[] = [];
+        let completed = 0;
         try {
-            await storage.remove(blockID, entry.path);
+            for (const entry of targets) {
+                setStatus(`正在删除 ${completed + 1}/${targets.length}：${entry.displayName}`);
+                try {
+                    await storage.remove(blockID, entry.path);
+                    completed++;
+                } catch (error) {
+                    console.error("File staging removal failed", error);
+                    errors.push(`${entry.displayName}：${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+            clearSelection();
             entries = await storage.list(blockID, currentDirectory);
             renderAll();
-            setStatus(`已删除：${entry.displayName}`);
-        } catch (error) {
-            console.error("Data staging removal failed", error);
-            setStatus(`删除失败：${entry.displayName}；${error instanceof Error ? error.message : String(error)}`);
+            setStatus(errors.length ? `部分删除失败：${errors.join("；")}` : `已删除 ${completed} 项`);
         } finally {
             if (!disposed) {
                 setBusy(false);
@@ -233,7 +332,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         }
         if (displayName === entry.displayName) {
             renamingPath = "";
-            renderContent();
+            renderAll();
             return;
         }
         const nameError = validateFileName(displayName);
@@ -254,7 +353,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
             renderAll();
             setStatus(`已修改显示名：${displayName}（实际存储路径不变）`);
         } catch (error) {
-            console.error("Data staging rename failed", error);
+            console.error("File staging rename failed", error);
             setStatus(`重命名失败：${error instanceof Error ? error.message : String(error)}`);
         } finally {
             if (!disposed) {
@@ -285,7 +384,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
             renderAll();
             setStatus(`已新建文件夹：${name}`);
         } catch (error) {
-            console.error("Data staging folder creation failed", error);
+            console.error("File staging folder creation failed", error);
             setStatus(`新建文件夹失败：${error instanceof Error ? error.message : String(error)}`);
         } finally {
             if (!disposed) {
@@ -302,6 +401,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         breadcrumbs.push({path: entry.path, displayName: entry.displayName});
         renamingPath = "";
         creatingFolder = false;
+        clearSelection();
         void refresh();
     };
 
@@ -359,6 +459,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
             }
 
             let completed = 0;
+            const uploadedSizes: Record<string, number> = {};
             const ordered = [...accepted].sort((a, b) => Number(b.isDir) - Number(a.isDir));
             for (const item of ordered) {
                 setStatus(`正在处理 ${completed + 1}/${ordered.length}：${item.path}`);
@@ -367,13 +468,23 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
                         await storage.ensureFolder(blockID, item.fullPath);
                     } else if (item.file) {
                         await storage.upload(blockID, item.fullPath, item.file);
+                        uploadedSizes[item.fullPath] = item.file.size;
                     }
                     completed++;
                 } catch (error) {
-                    console.error("Data staging upload failed", error);
+                    console.error("File staging upload failed", error);
                     errors.push(`${item.path} 失败：${error instanceof Error ? error.message : String(error)}`);
                 }
             }
+            if (Object.keys(uploadedSizes).length) {
+                try {
+                    await storage.recordSizes(blockID, uploadedSizes);
+                } catch (error) {
+                    console.error("File staging size metadata failed", error);
+                    errors.push(`大小记录失败：${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+            clearSelection();
             entries = await storage.list(blockID, currentDirectory);
             renderAll();
             const summary = `已完成 ${completed}/${ordered.length} 项`;
@@ -382,7 +493,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
                 showMessage("部分暂存内容上传失败，请在块内查看详情", 0, "error");
             }
         } catch (error) {
-            console.error("Data staging upload preparation failed", error);
+            console.error("File staging upload preparation failed", error);
             setStatus(`上传失败：${error instanceof Error ? error.message : String(error)}`);
         } finally {
             if (!disposed) {
@@ -391,25 +502,140 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         }
     };
 
+    const moveEntries = async (paths: string[], targetDirectory: string) => {
+        if (busy || !paths.length) {
+            return;
+        }
+        const sources = paths.filter(path => getParentPath(path) !== targetDirectory);
+        if (!sources.length) {
+            return;
+        }
+        const invalid = sources.find(path => path === targetDirectory || targetDirectory.startsWith(`${path}/`));
+        if (invalid) {
+            setStatus("不能移动到自身或其子目录中");
+            return;
+        }
+        setBusy(true);
+        const errors: string[] = [];
+        let completed = 0;
+        try {
+            const targetEntries = await storage.list(blockID, targetDirectory);
+            const targetNames = new Set(targetEntries.map(entry => entry.name.toLocaleLowerCase()));
+            for (const path of sources) {
+                const baseName = getBaseName(path);
+                if (targetNames.has(baseName.toLocaleLowerCase())) {
+                    errors.push(`${baseName}：目标目录已存在同名项目`);
+                    continue;
+                }
+                setStatus(`正在移动 ${completed + 1}/${sources.length}：${baseName}`);
+                try {
+                    await storage.move(blockID, path, joinRelativePath(targetDirectory, baseName));
+                    targetNames.add(baseName.toLocaleLowerCase());
+                    completed++;
+                } catch (error) {
+                    console.error("File staging move failed", error);
+                    errors.push(`${baseName}：${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+            clearSelection();
+            entries = await storage.list(blockID, currentDirectory);
+            renderAll();
+            setStatus(errors.length ? `部分移动失败：${errors.join("；")}` : `已移动 ${completed} 项`);
+        } catch (error) {
+            console.error("File staging move failed", error);
+            setStatus(`移动失败：${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            if (!disposed) {
+                setBusy(false);
+            }
+        }
+    };
+
     const hasDraggedFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types || []).includes("Files");
+    const hasInternalDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types || []).includes(INTERNAL_DRAG_TYPE);
+
+    const clearDropHighlights = () => {
+        contentElement.classList.remove("data-staging__content--over");
+        root.querySelectorAll(".data-staging__entry--over").forEach(element => element.classList.remove("data-staging__entry--over"));
+        root.querySelectorAll(".data-staging__breadcrumb--over").forEach(element => element.classList.remove("data-staging__breadcrumb--over"));
+    };
+
+    const readInternalPaths = (event: DragEvent): string[] => {
+        const raw = event.dataTransfer?.getData(INTERNAL_DRAG_TYPE);
+        if (!raw) {
+            return [];
+        }
+        try {
+            const value: unknown = JSON.parse(raw);
+            return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+        } catch {
+            return [];
+        }
+    };
 
     const handleDrop = async (event: DragEvent, targetDirectory: string) => {
-        if (!hasDraggedFiles(event)) {
+        if (!hasDraggedFiles(event) && !hasInternalDrag(event)) {
             return;
         }
         event.preventDefault();
         event.stopPropagation();
-        contentElement.classList.remove("data-staging__content--over");
-        root.querySelectorAll(".data-staging__entry--over").forEach(element => element.classList.remove("data-staging__entry--over"));
+        clearDropHighlights();
         if (busy || !event.dataTransfer) {
             return;
         }
         try {
-            await upload(await dataTransferToUploadItems(event.dataTransfer), targetDirectory);
+            if (hasInternalDrag(event)) {
+                await moveEntries(readInternalPaths(event), targetDirectory);
+            } else {
+                await upload(await dataTransferToUploadItems(event.dataTransfer), targetDirectory);
+            }
         } catch (error) {
-            console.error("Data staging drop failed", error);
-            setStatus(`无法读取拖入内容：${error instanceof Error ? error.message : String(error)}`);
+            console.error("File staging drop failed", error);
+            setStatus(`无法处理拖入内容：${error instanceof Error ? error.message : String(error)}`);
         }
+    };
+
+    const bindDropTarget = (element: HTMLElement, getTargetDirectory: () => string, highlight: () => void) => {
+        element.addEventListener("dragover", event => {
+            if (!hasDraggedFiles(event) && !hasInternalDrag(event)) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            clearDropHighlights();
+            if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = busy ? "none" : (hasInternalDrag(event) ? "move" : "copy");
+            }
+            if (!busy) {
+                highlight();
+            }
+        }, {signal});
+        element.addEventListener("dragleave", event => {
+            if (!element.contains(event.relatedTarget as Node | null)) {
+                clearDropHighlights();
+            }
+        }, {signal});
+        element.addEventListener("drop", event => void handleDrop(event, getTargetDirectory()), {signal});
+    };
+
+    const renderBreadcrumbs = () => {
+        breadcrumbsElement.replaceChildren();
+        breadcrumbs.forEach((item, index) => {
+            if (index) {
+                const separator = document.createElement("span");
+                separator.className = "data-staging__breadcrumb-separator";
+                separator.innerHTML = icon("chevron");
+                breadcrumbsElement.append(separator);
+            }
+            const button = makeButton(item.displayName, index === 0 ? "box" : "folder", () => {
+                if (!busy) {
+                    navigateTo(item.path, index);
+                }
+            }, "data-staging__breadcrumb");
+            button.disabled = busy || index === breadcrumbs.length - 1;
+            bindDropTarget(button, () => item.path, () => button.classList.add("data-staging__breadcrumb--over"));
+            breadcrumbsElement.append(button);
+        });
     };
 
     const renderRename = (entry: StagingFileEntry, container: HTMLElement) => {
@@ -420,11 +646,11 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         renameInput.value = entry.displayName;
         renameInput.setAttribute("aria-label", `显示名称：${entry.displayName}`);
         const save = makeButton("保存", "rename", () => undefined, "b3-button--outline");
-        const cancel = makeButton("取消", "rename", () => undefined);
+        const cancel = makeButton("取消", "close", () => undefined);
         save.type = "submit";
         cancel.addEventListener("click", () => {
             renamingPath = "";
-            renderContent();
+            renderAll();
         }, {signal});
         form.append(renameInput, save, cancel);
         form.addEventListener("submit", event => {
@@ -439,70 +665,82 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
     };
 
     const renderEntry = (entry: StagingFileEntry) => {
+        const kind = getFileKind(entry.name, entry.isDir);
         const card = document.createElement("article");
-        card.className = `data-staging__entry${entry.isDir ? " data-staging__entry--folder" : ""}`;
+        card.className = `data-staging__entry data-staging__entry--${kind}${entry.isDir ? " data-staging__entry--folder" : ""}`;
         card.dataset.path = entry.path;
-
-        const main = document.createElement(entry.isDir ? "button" : "div");
-        main.className = "data-staging__entry-main";
-        if (main instanceof HTMLButtonElement) {
-            main.type = "button";
-            main.disabled = busy;
-            main.title = `打开 ${entry.displayName}`;
-            main.addEventListener("click", () => openFolder(entry), {signal});
+        card.draggable = !busy;
+        if (selected.includes(entry.path)) {
+            card.classList.add("data-staging__entry--selected");
+            card.setAttribute("aria-selected", "true");
         }
+
+        if (renamingPath === entry.path) {
+            renderRename(entry, card);
+            return card;
+        }
+
         const iconElement = document.createElement("span");
         iconElement.className = "data-staging__entry-icon";
-        iconElement.innerHTML = icon(entry.isDir ? "folder" : "file");
+        iconElement.innerHTML = icon(KIND_ICONS[kind]);
         const name = document.createElement("span");
         name.className = "data-staging__name";
         name.textContent = entry.displayName;
         name.title = entry.displayName === entry.name ? entry.displayName : `实际存储名：${entry.name}`;
-        main.append(iconElement, name);
-        card.append(main);
+        const kindLabel = document.createElement("span");
+        kindLabel.className = "data-staging__kind";
+        kindLabel.textContent = FILE_KIND_LABELS[kind];
+        const size = document.createElement("span");
+        size.className = "data-staging__size";
+        size.textContent = entry.isDir ? "—" : (typeof entry.size === "number" ? formatFileSize(entry.size) : "未记录");
+        const time = document.createElement("span");
+        time.className = "data-staging__time";
+        time.textContent = formatTime(entry.updated);
+        card.append(iconElement, name, kindLabel, size, time);
 
-        if (renamingPath === entry.path) {
-            renderRename(entry, card);
-        } else {
-            const time = document.createElement("div");
-            time.className = "data-staging__time";
-            time.textContent = entry.isDir ? "文件夹" : formatTime(entry.updated);
-            card.append(time);
-        }
-
-        const actions = document.createElement("div");
-        actions.className = "data-staging__entry-actions";
-        actions.append(
-            makeButton(`重命名 ${entry.displayName}`, "rename", () => {
-                renamingPath = entry.path;
-                renderContent();
-            }),
-            makeButton(`${entry.isDir ? "下载 ZIP" : "下载"} ${entry.displayName}`, "download", () => {
-                void (entry.isDir ? downloadFolder(entry.path, entry.displayName) : downloadFile(entry));
-            }),
-            makeButton(`删除 ${entry.displayName}`, "trash", () => void remove(entry), "data-staging__remove"),
-        );
-        card.append(actions);
-
+        card.addEventListener("click", event => {
+            if (busy) {
+                return;
+            }
+            if (event.shiftKey && selectionAnchor) {
+                selected = resolveRangeSelection(visiblePaths(), selectionAnchor, entry.path);
+            } else if (event.ctrlKey || event.metaKey) {
+                selected = toggleSelected(selected, entry.path);
+                selectionAnchor = entry.path;
+            } else {
+                selected = [entry.path];
+                selectionAnchor = entry.path;
+            }
+            renderAll();
+        }, {signal});
+        card.addEventListener("dblclick", event => {
+            event.preventDefault();
+            if (busy) {
+                return;
+            }
+            if (entry.isDir) {
+                openFolder(entry);
+            } else {
+                detailsVisible = true;
+                selected = [entry.path];
+                selectionAnchor = entry.path;
+                renderAll();
+            }
+        }, {signal});
+        card.addEventListener("dragstart", event => {
+            if (busy || !event.dataTransfer) {
+                return;
+            }
+            if (!selected.includes(entry.path)) {
+                selected = [entry.path];
+                selectionAnchor = entry.path;
+            }
+            event.dataTransfer.setData(INTERNAL_DRAG_TYPE, JSON.stringify(selected));
+            event.dataTransfer.effectAllowed = "move";
+        }, {signal});
+        card.addEventListener("dragend", clearDropHighlights, {signal});
         if (entry.isDir) {
-            card.addEventListener("dragover", event => {
-                if (!hasDraggedFiles(event)) {
-                    return;
-                }
-                event.preventDefault();
-                event.stopPropagation();
-                contentElement.classList.remove("data-staging__content--over");
-                if (event.dataTransfer) {
-                    event.dataTransfer.dropEffect = busy ? "none" : "copy";
-                }
-                card.classList.toggle("data-staging__entry--over", !busy);
-            }, {signal});
-            card.addEventListener("dragleave", event => {
-                if (!card.contains(event.relatedTarget as Node | null)) {
-                    card.classList.remove("data-staging__entry--over");
-                }
-            }, {signal});
-            card.addEventListener("drop", event => void handleDrop(event, entry.path), {signal});
+            bindDropTarget(card, () => entry.path, () => card.classList.add("data-staging__entry--over"));
         }
         return card;
     };
@@ -519,10 +757,10 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         folderInput.setAttribute("aria-label", "新文件夹名称");
         const save = makeButton("创建", "folderPlus", () => undefined, "b3-button--outline");
         save.type = "submit";
-        const cancel = makeButton("取消", "folderPlus", () => undefined);
+        const cancel = makeButton("取消", "close", () => undefined);
         cancel.addEventListener("click", () => {
             creatingFolder = false;
-            renderContent();
+            renderAll();
         }, {signal});
         form.append(folderInput, save, cancel);
         form.addEventListener("submit", event => {
@@ -533,27 +771,131 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         requestAnimationFrame(() => folderInput.focus());
     };
 
+    const renderDetailField = (container: HTMLElement, label: string, value: string) => {
+        const row = document.createElement("div");
+        row.className = "data-staging__detail-row";
+        const key = document.createElement("span");
+        key.className = "data-staging__detail-label";
+        key.textContent = label;
+        const text = document.createElement("span");
+        text.className = "data-staging__detail-value";
+        text.textContent = value;
+        text.title = value;
+        row.append(key, text);
+        container.append(row);
+    };
+
+    const renderDetail = () => {
+        detailElement.replaceChildren();
+        detailElement.hidden = !detailsVisible;
+        root.classList.toggle("data-staging--detail-hidden", !detailsVisible);
+        if (!detailsVisible) {
+            return;
+        }
+        const targets = selectedEntries();
+        const title = document.createElement("div");
+        title.className = "data-staging__detail-title";
+        detailElement.append(title);
+        if (!targets.length) {
+            title.innerHTML = `${icon("info")}<span>详情</span>`;
+            const hint = document.createElement("p");
+            hint.className = "data-staging__detail-hint";
+            hint.textContent = "单击选择项目，双击进入文件夹。拖动文件到此处即可上传，拖动条目到文件夹即可移动。";
+            detailElement.append(hint);
+            renderDetailField(detailElement, "当前目录", breadcrumbs[breadcrumbs.length - 1].displayName);
+            renderDetailField(detailElement, "项目数", `${entries.length} 项`);
+            return;
+        }
+        if (targets.length > 1) {
+            title.innerHTML = `${icon("box")}<span>已选 ${targets.length} 项</span>`;
+            const known = targets.filter(entry => !entry.isDir && typeof entry.size === "number");
+            const total = known.reduce((sum, entry) => sum + (entry.size || 0), 0);
+            renderDetailField(detailElement, "文件", `${targets.filter(entry => !entry.isDir).length} 个`);
+            renderDetailField(detailElement, "文件夹", `${targets.filter(entry => entry.isDir).length} 个`);
+            renderDetailField(detailElement, "已记录大小", known.length ? `${formatFileSize(total)}（${known.length} 个文件）` : "未记录");
+            const actions = document.createElement("div");
+            actions.className = "data-staging__detail-actions";
+            actions.append(
+                makeButton("下载所选项", "download", () => void downloadSelected()),
+                makeButton("删除所选项", "trash", () => void removeEntries(targets), "data-staging__remove"),
+            );
+            detailElement.append(actions);
+            return;
+        }
+        const entry = targets[0];
+        const kind = getFileKind(entry.name, entry.isDir);
+        title.innerHTML = icon(KIND_ICONS[kind]);
+        const titleLabel = document.createElement("span");
+        titleLabel.textContent = entry.displayName;
+        title.append(titleLabel);
+        title.title = entry.displayName;
+        renderDetailField(detailElement, "类型", FILE_KIND_LABELS[kind]);
+        renderDetailField(detailElement, "大小", entry.isDir ? "—" : (typeof entry.size === "number" ? formatFileSize(entry.size) : "未记录（旧版上传）"));
+        renderDetailField(detailElement, "修改时间", formatTime(entry.updated) || "未知");
+        renderDetailField(detailElement, "实际存储名", entry.name);
+        renderDetailField(detailElement, "相对路径", entry.path);
+        const actions = document.createElement("div");
+        actions.className = "data-staging__detail-actions";
+        actions.append(
+            makeButton(entry.isDir ? "下载 ZIP" : "下载", "download", () => {
+                setBusy(true);
+                void downloadEntry(entry).catch(error => {
+                    console.error("File staging download failed", error);
+                    setStatus(`下载失败：${error instanceof Error ? error.message : String(error)}`);
+                }).finally(() => {
+                    if (!disposed) {
+                        setBusy(false);
+                    }
+                });
+            }),
+            makeButton("重命名", "rename", () => {
+                renamingPath = entry.path;
+                renderAll();
+            }),
+            makeButton("删除", "trash", () => void removeEntries([entry]), "data-staging__remove"),
+        );
+        detailElement.append(actions);
+    };
+
     function renderContent() {
         contentElement.className = `data-staging__content data-staging__content--${viewMode}`;
         contentElement.replaceChildren();
         renderNewFolder();
-        if (!entries.length) {
+        const visible = visibleEntries();
+        if (viewMode === "list" && visible.length) {
+            const head = document.createElement("div");
+            head.className = "data-staging__list-head";
+            head.innerHTML = "<span></span><span>名称</span><span>类型</span><span>大小</span><span>修改时间</span>";
+            contentElement.append(head);
+        }
+        if (!visible.length) {
             const empty = document.createElement("div");
             empty.className = "data-staging__empty";
-            empty.textContent = "暂无文件或文件夹\n拖动文件或文件夹到此处，或点击“添加文件”";
+            empty.textContent = entries.length
+                ? "当前目录没有匹配搜索条件的项目"
+                : "暂无文件或文件夹\n拖动文件或文件夹到此处，或点击“添加文件”";
             contentElement.append(empty);
             return;
         }
-        entries.forEach(entry => contentElement.append(renderEntry(entry)));
+        visible.forEach(entry => contentElement.append(renderEntry(entry)));
     }
 
     function renderAll() {
         renderBreadcrumbs();
         renderContent();
+        renderDetail();
         const nextMode = viewMode === "grid" ? "列表" : "图标";
         toggleViewButton.innerHTML = `${icon(viewMode === "grid" ? "list" : "grid")}<span>${nextMode}视图</span>`;
         toggleViewButton.title = `切换为${nextMode}视图`;
         toggleViewButton.setAttribute("aria-label", toggleViewButton.title);
+        sortDirectionButton.textContent = sortDescending ? "降序" : "升序";
+        sortDirectionButton.title = sortDescending ? "切换为升序" : "切换为降序";
+        sortDirectionButton.setAttribute("aria-label", sortDirectionButton.title);
+        toolbarElement.hidden = !selected.length;
+        selectionCount.textContent = `已选 ${selected.length} 项`;
+        renameSelectedButton.disabled = busy || selected.length !== 1;
+        downloadSelectedButton.disabled = busy || !selected.length;
+        removeSelectedButton.disabled = busy || !selected.length;
     }
 
     async function refresh() {
@@ -564,10 +906,11 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         setStatus("正在读取文件列表...");
         try {
             entries = await storage.list(blockID, currentDirectory);
+            selected = selected.filter(path => entries.some(entry => entry.path === path));
             renderAll();
             setStatus(entries.length ? `共 ${entries.length} 项` : "");
         } catch (error) {
-            console.error("Data staging refresh failed", error);
+            console.error("File staging refresh failed", error);
             setStatus(`读取失败：${error instanceof Error ? error.message : String(error)}`);
         } finally {
             if (!disposed) {
@@ -581,15 +924,40 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
     newFolderButton.addEventListener("click", () => {
         creatingFolder = true;
         renamingPath = "";
-        renderContent();
+        renderAll();
     }, {signal});
-    downloadCurrentButton.addEventListener("click", () => {
-        const current = breadcrumbs[breadcrumbs.length - 1];
-        void downloadFolder(current.path, current.displayName);
-    }, {signal});
+    downloadCurrentButton.addEventListener("click", () => void downloadCurrent(), {signal});
     refreshButton.addEventListener("click", () => void refresh(), {signal});
     toggleViewButton.addEventListener("click", () => {
         viewMode = viewMode === "grid" ? "list" : "grid";
+        renderAll();
+    }, {signal});
+    toggleDetailButton.addEventListener("click", () => {
+        detailsVisible = !detailsVisible;
+        renderAll();
+    }, {signal});
+    searchInput.addEventListener("input", () => {
+        filterKeyword = searchInput.value;
+        renderAll();
+    }, {signal});
+    sortSelect.addEventListener("change", () => {
+        sortKey = sortSelect.value as SortKey;
+        renderAll();
+    }, {signal});
+    sortDirectionButton.addEventListener("click", () => {
+        sortDescending = !sortDescending;
+        renderAll();
+    }, {signal});
+    downloadSelectedButton.addEventListener("click", () => void downloadSelected(), {signal});
+    renameSelectedButton.addEventListener("click", () => {
+        if (selected.length === 1) {
+            renamingPath = selected[0];
+            renderAll();
+        }
+    }, {signal});
+    removeSelectedButton.addEventListener("click", () => void removeEntries(selectedEntries()), {signal});
+    clearSelectionButton.addEventListener("click", () => {
+        clearSelection();
         renderAll();
     }, {signal});
     input.addEventListener("change", () => {
@@ -602,22 +970,54 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         directoryInput.value = "";
         void upload(filesToUploadItems(files), currentDirectory);
     }, {signal});
-    contentElement.addEventListener("dragover", event => {
-        if (!hasDraggedFiles(event)) {
+    contentElement.addEventListener("click", event => {
+        if (event.target === contentElement && !busy) {
+            clearSelection();
+            renderAll();
+        }
+    }, {signal});
+    bindDropTarget(contentElement, () => currentDirectory, () => contentElement.classList.add("data-staging__content--over"));
+    root.addEventListener("keydown", event => {
+        const target = event.target as HTMLElement | null;
+        const isField = target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
+        if (event.key === "Escape") {
+            if (renamingPath || creatingFolder) {
+                renamingPath = "";
+                creatingFolder = false;
+            } else {
+                clearSelection();
+            }
+            renderAll();
+            event.stopPropagation();
             return;
         }
-        event.preventDefault();
-        if (event.dataTransfer) {
-            event.dataTransfer.dropEffect = busy ? "none" : "copy";
+        if (isField || busy) {
+            return;
         }
-        contentElement.classList.toggle("data-staging__content--over", !busy);
-    }, {signal});
-    contentElement.addEventListener("dragleave", event => {
-        if (!contentElement.contains(event.relatedTarget as Node | null)) {
-            contentElement.classList.remove("data-staging__content--over");
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+            event.preventDefault();
+            event.stopPropagation();
+            selected = visiblePaths();
+            selectionAnchor = selected[0] || "";
+            renderAll();
+        } else if (event.key === "Delete") {
+            event.preventDefault();
+            event.stopPropagation();
+            void removeEntries(selectedEntries());
+        } else if (event.key === "F2" && selected.length === 1) {
+            event.preventDefault();
+            event.stopPropagation();
+            renamingPath = selected[0];
+            renderAll();
+        } else if (event.key === "Enter" && selected.length === 1) {
+            const entry = selectedEntries()[0];
+            if (entry?.isDir) {
+                event.preventDefault();
+                event.stopPropagation();
+                openFolder(entry);
+            }
         }
     }, {signal});
-    contentElement.addEventListener("drop", event => void handleDrop(event, currentDirectory), {signal});
 
     if (!blockID) {
         addButton.disabled = true;
@@ -625,7 +1025,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         newFolderButton.disabled = true;
         downloadCurrentButton.disabled = true;
         refreshButton.disabled = true;
-        setStatus("无法确定暂存块 ID，请重新插入数据暂存块");
+        setStatus("无法确定暂存块 ID，请重新插入文件暂存块");
     } else {
         renderAll();
         void refresh();

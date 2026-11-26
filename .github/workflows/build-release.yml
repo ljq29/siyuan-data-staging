@@ -78,6 +78,6 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "数据暂存 $GITHUB_REF_NAME" \
+              --title "文件暂存 $GITHUB_REF_NAME" \
               --generate-notes
           fi

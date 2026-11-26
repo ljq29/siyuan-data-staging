@@ -29,15 +29,17 @@ const loadPlugin = () => {
     return module.exports.default;
 };
 
-test("插件注册数据暂存自定义块和斜杠命令", () => {
+test("插件注册文件暂存自定义块和斜杠命令", () => {
     const DataStagingPlugin = loadPlugin();
     const plugin = new DataStagingPlugin();
     plugin.onload();
     assert.equal(typeof plugin.customBlockRenders["siyuan-data-staging"].render, "function");
     assert.equal(plugin.protyleSlash.length, 1);
+    assert.ok(plugin.protyleSlash[0].filter.includes("文件暂存"));
     assert.ok(plugin.protyleSlash[0].filter.includes("数据暂存"));
+    assert.ok(plugin.protyleSlash[0].filter.includes("file store"));
     assert.match(plugin.protyleSlash[0].html, /<svg/);
-    assert.match(plugin.protyleSlash[0].html, /数据暂存/);
+    assert.match(plugin.protyleSlash[0].html, /文件暂存/);
 
     let inserted;
     plugin.protyleSlash[0].callback({
