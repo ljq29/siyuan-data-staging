@@ -219,6 +219,28 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         selectionAnchor = "";
     };
 
+    const renderToolbarState = () => {
+        toolbarElement.hidden = !selected.length;
+        selectionCount.textContent = `已选 ${selected.length} 项`;
+        renameSelectedButton.disabled = busy || selected.length !== 1;
+        downloadSelectedButton.disabled = busy || !selected.length;
+        removeSelectedButton.disabled = busy || !selected.length;
+    };
+
+    const renderSelection = () => {
+        contentElement.querySelectorAll<HTMLElement>(".data-staging__entry").forEach(element => {
+            const isSelected = selected.includes(element.dataset.path || "");
+            element.classList.toggle("data-staging__entry--selected", isSelected);
+            if (isSelected) {
+                element.setAttribute("aria-selected", "true");
+            } else {
+                element.removeAttribute("aria-selected");
+            }
+        });
+        renderToolbarState();
+        renderDetail();
+    };
+
     const navigateTo = (path: string, depth: number) => {
         currentDirectory = path;
         breadcrumbs = breadcrumbs.slice(0, depth + 1);
@@ -711,7 +733,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
                 selected = [entry.path];
                 selectionAnchor = entry.path;
             }
-            renderAll();
+            renderSelection();
         }, {signal});
         card.addEventListener("dblclick", event => {
             event.preventDefault();
@@ -891,11 +913,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
         sortDirectionButton.textContent = sortDescending ? "降序" : "升序";
         sortDirectionButton.title = sortDescending ? "切换为升序" : "切换为降序";
         sortDirectionButton.setAttribute("aria-label", sortDirectionButton.title);
-        toolbarElement.hidden = !selected.length;
-        selectionCount.textContent = `已选 ${selected.length} 项`;
-        renameSelectedButton.disabled = busy || selected.length !== 1;
-        downloadSelectedButton.disabled = busy || !selected.length;
-        removeSelectedButton.disabled = busy || !selected.length;
+        renderToolbarState();
     }
 
     async function refresh() {
@@ -958,7 +976,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
     removeSelectedButton.addEventListener("click", () => void removeEntries(selectedEntries()), {signal});
     clearSelectionButton.addEventListener("click", () => {
         clearSelection();
-        renderAll();
+        renderSelection();
     }, {signal});
     input.addEventListener("change", () => {
         const files = Array.from(input.files || []);
@@ -973,7 +991,7 @@ export const renderDataStaging = (options: StagingRenderOptions, storage: Stagin
     contentElement.addEventListener("click", event => {
         if (event.target === contentElement && !busy) {
             clearSelection();
-            renderAll();
+            renderSelection();
         }
     }, {signal});
     bindDropTarget(contentElement, () => currentDirectory, () => contentElement.classList.add("data-staging__content--over"));

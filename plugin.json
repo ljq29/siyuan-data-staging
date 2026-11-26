@@ -2,10 +2,14 @@
   "name": "siyuan-data-staging",
   "author": "antior",
   "url": "https://github.com/ljq29/siyuan-data-staging",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "minAppVersion": "3.8.10",
-  "backends": ["all"],
-  "frontends": ["all"],
+  "backends": [
+    "all"
+  ],
+  "frontends": [
+    "all"
+  ],
   "displayName": {
     "default": "File Staging",
     "zh-CN": "文件暂存",
@@ -21,5 +25,18 @@
     "zh-CN": "README.md",
     "zh-TW": "README.md"
   },
-  "keywords": ["file", "files", "staging", "file staging", "file store", "filebox", "attachment", "sync", "网盘", "文件暂存", "暂存", "文件中转"]
+  "keywords": [
+    "file",
+    "files",
+    "staging",
+    "file staging",
+    "file store",
+    "filebox",
+    "attachment",
+    "sync",
+    "网盘",
+    "文件暂存",
+    "暂存",
+    "文件中转"
+  ]
 }
